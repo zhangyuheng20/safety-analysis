@@ -1,5 +1,6 @@
 # 排除所有文件，除了 .py 和 .md
 *
+!*/
 !*.py
 !*.md
 !.gitignore
