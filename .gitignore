@@ -1,0 +1,13 @@
+# 排除所有文件，除了 .py 和 .md
+*
+!*.py
+!*.md
+!.gitignore
+
+# 排除目录
+/Qwen2.5-VL-7B-Instruct/
+/QwenGuard-v1.2-7B/
+/ProGuard-7B/
+/beaver_tails_data/
+/mm_safetybench/
+__pycache__/
