@@ -1,6 +1,7 @@
 import os
 import json
 import torch
+import argparse
 from PIL import Image
 from tqdm import tqdm  #用于显示进度条
 from datasets import load_from_disk, load_dataset
@@ -11,33 +12,64 @@ from qwen_vl_utils import process_vision_info
 # 模型名称 (QwenGuard-v1.2-7B)
 MODEL_ID = "/HDD0/zhangyuheng/safety_analysis/QwenGuard-v1.2-7B" 
 
-# 数据集根路径
-DATASET_ROOT = "/HDD0/zhangyuheng/safety_analysis/mm_safetybench" 
+# 数据集配置
+DATASETS = {
+    "mm_safetybench": {
+        "root": "/HDD0/zhangyuheng/safety_analysis/mm_safetybench",
+        "output": "mm_safetybench_qwenguard_results",
+        "image_save_dir": "/HDD0/zhangyuheng/safety_analysis/mm_safetybench/saved_images",
+        "subdir_filter": "SD_TYPO"
+    },
+    "beaver_tails": {
+        "root": "/HDD0/zhangyuheng/safety_analysis/beaver_tails_data",
+        "output": "qwenguard_results",
+        "image_save_dir": "/HDD0/zhangyuheng/safety_analysis/beaver_tails_data/saved_images",
+        "subdir_filter": None
+    }
+}
 
-# 结果保存根路径
-OUTPUT_ROOT = "mm_safetybench_qwenguard_results"
-IMAGE_SAVE_DIR = "/HDD0/zhangyuheng/safety_analysis/mm_safetybench/saved_images"  # 图片将单独保存在这个文件夹
+# 默认数据集
+default_dataset = "mm_safetybench"
 
 # 内存管理配置
 SAVE_INTERVAL = 10  # 每处理10个样本保存一次
 CLEAR_CACHE_INTERVAL = 5  # 每处理5个样本清空一次缓存
 # ===========================================
 
-def run_inference():
-    # 1. 设置内存管理
+def run_inference(dataset_name):
+    # 1. 验证数据集名称
+    if dataset_name not in DATASETS:
+        print(f"错误: 数据集 {dataset_name} 不存在。可用数据集: {list(DATASETS.keys())}")
+        return
+    
+    # 2. 获取数据集配置
+    dataset_config = DATASETS[dataset_name]
+    DATASET_ROOT = dataset_config["root"]
+    OUTPUT_ROOT = dataset_config["output"]
+    IMAGE_SAVE_DIR = dataset_config["image_save_dir"]
+    SUBDIR_FILTER = dataset_config["subdir_filter"]
+    
+    print(f"\n使用数据集: {dataset_name}")
+    print(f"数据集路径: {DATASET_ROOT}")
+    print(f"结果保存路径: {OUTPUT_ROOT}")
+    print(f"图片保存路径: {IMAGE_SAVE_DIR}")
+    if SUBDIR_FILTER:
+        print(f"子目录过滤: {SUBDIR_FILTER}")
+    
+    # 3. 设置内存管理
     torch.cuda.empty_cache()
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
     
-    # 2. 创建图片保存目录
+    # 4. 创建图片保存目录
     if not os.path.exists(IMAGE_SAVE_DIR):
         os.makedirs(IMAGE_SAVE_DIR)
 
-    # 3. 创建结果保存根目录
+    # 5. 创建结果保存根目录
     if not os.path.exists(OUTPUT_ROOT):
         os.makedirs(OUTPUT_ROOT)
 
-    # 4. 加载模型和处理器
-    print(f"正在加载模型: {MODEL_ID} ...")
+    # 6. 加载模型和处理器
+    print(f"\n正在加载模型: {MODEL_ID} ...")
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.bfloat16,
@@ -46,17 +78,21 @@ def run_inference():
     )
     processor = AutoProcessor.from_pretrained(MODEL_ID)
     
-    # 5. 获取所有类别目录
+    # 7. 获取所有类别目录
     categories = [d for d in os.listdir(DATASET_ROOT) if os.path.isdir(os.path.join(DATASET_ROOT, d)) and d != 'saved_images']
-    print(f"找到 {len(categories)} 个类别: {categories}")
+    print(f"\n找到 {len(categories)} 个类别: {categories}")
     
-    # 6. 遍历每个类别
+    # 8. 遍历每个类别
     for category in categories:
         category_path = os.path.join(DATASET_ROOT, category)
         
-        # 获取类别下的子目录（仅处理 SD_TYPO）
-        subdirs = [d for d in os.listdir(category_path) if os.path.isdir(os.path.join(category_path, d)) and d == 'SD_TYPO']
-        print(f"类别 {category} 下的 SD_TYPO 子目录: {subdirs}")
+        # 获取类别下的子目录
+        if SUBDIR_FILTER:
+            subdirs = [d for d in os.listdir(category_path) if os.path.isdir(os.path.join(category_path, d)) and d == SUBDIR_FILTER]
+            print(f"类别 {category} 下的 {SUBDIR_FILTER} 子目录: {subdirs}")
+        else:
+            subdirs = [d for d in os.listdir(category_path) if os.path.isdir(os.path.join(category_path, d))]
+            print(f"类别 {category} 下的所有子目录: {subdirs}")
         
         # 遍历每个子目录
         for subdir in subdirs:
@@ -87,7 +123,7 @@ def run_inference():
                 print(f"数据集加载失败，请检查路径: {e}")
                 continue
 
-            # 7. 检查是否存在已处理的结果
+            # 9. 检查是否存在已处理的结果
             results = []
             start_idx = 0
             if os.path.exists(output_json):
@@ -103,7 +139,7 @@ def run_inference():
             else:
                 print(f"开始处理，共 {len(eval_data)} 条数据...")
 
-            # 8. 遍历数据集进行推理 (从start_idx开始)
+            # 10. 遍历数据集进行推理 (从start_idx开始)
             for idx in tqdm(range(start_idx, len(eval_data)), total=len(eval_data)-start_idx):
                 try:
                     item = eval_data[idx]
@@ -117,7 +153,7 @@ def run_inference():
                         
                         # --- 保存图片到本地 ---
                         # 为了在 JSON 中引用，我们需要把图片存成文件
-                        image_filename = f"img_{category}_{subdir}_{idx}.jpg"
+                        image_filename = f"img_qwenguard_{dataset_name}_{category}_{subdir}_{idx}.jpg"
                         image_path = os.path.join(IMAGE_SAVE_DIR, image_filename)
                         # 将 PIL 图片保存下来
                         pil_image.save(image_path)
@@ -202,7 +238,7 @@ def run_inference():
                     # 跳过出错的示例，继续处理下一个
                     continue
 
-            # 9. 保存最终结果
+            # 11. 保存最终结果
             with open(output_json, "w", encoding="utf-8") as f:
                 json.dump(results, f, ensure_ascii=False, indent=4)
             
@@ -214,4 +250,16 @@ def run_inference():
     print(f"\n所有类别处理完成！结果保存在 {OUTPUT_ROOT} 目录下")
 
 if __name__ == "__main__":
-    run_inference()
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="运行 QwenGuard 模型推理")
+    parser.add_argument(
+        "--dataset", 
+        type=str, 
+        default=default_dataset, 
+        choices=list(DATASETS.keys()),
+        help=f"选择要使用的数据集 (默认: {default_dataset})"
+    )
+    args = parser.parse_args()
+    
+    # 运行推理
+    run_inference(args.dataset)
