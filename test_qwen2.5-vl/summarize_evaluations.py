@@ -2,6 +2,7 @@ import os
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
 # 图表输出目录
 OUTPUT_DIR = "mm_safetybench_evaluation_charts"
@@ -202,17 +203,44 @@ def plot_model_averages(model_averages):
     plt.savefig(output_path)
     plt.close()
 
-def main():
+def main(input_file=None):
     """主函数"""
-    # 遍历所有评估文件
-    for root, dirs, files in os.walk(EVALUATIONS_DIR):
-        for file in files:
-            if file.endswith('_evaluations.json'):
-                file_path = os.path.join(root, file)
-                category = extract_category(file_path)
-                print(f"处理文件: {file_path} (类别: {category})")
-                data = load_evaluation_file(file_path)
-                process_evaluation_data(data, category)
+    # 如果提供了输入文件，只处理该文件
+    if input_file:
+        if os.path.exists(input_file):
+            print(f"处理文件: {input_file}")
+            data = load_evaluation_file(input_file)
+            # 提取类别信息
+            category = extract_category(input_file)
+            process_evaluation_data(data, category)
+        else:
+            print(f"错误: 文件 {input_file} 不存在")
+            return
+    else:
+        # 遍历所有评估文件
+        if not os.path.exists(EVALUATIONS_DIR):
+            print(f"错误: 目录 {EVALUATIONS_DIR} 不存在")
+            return
+        
+        files_found = False
+        for root, dirs, files in os.walk(EVALUATIONS_DIR):
+            for file in files:
+                if file.endswith('_evaluations.json'):
+                    files_found = True
+                    file_path = os.path.join(root, file)
+                    category = extract_category(file_path)
+                    print(f"处理文件: {file_path} (类别: {category})")
+                    data = load_evaluation_file(file_path)
+                    process_evaluation_data(data, category)
+        
+        if not files_found:
+            print(f"警告: 目录 {EVALUATIONS_DIR} 中没有找到评估文件")
+            return
+    
+    # 检查是否有评估数据
+    if not total_scores or all(all(len(scores) == 0 for scores in models.values()) for models in total_scores.values()):
+        print("错误: 没有找到有效的评估数据")
+        return
     
     # 计算整体平均值
     overall_averages = calculate_averages(total_scores)
@@ -236,7 +264,9 @@ def main():
     for category, avg_scores in category_averages.items():
         category_display_name = category_name_map.get(category, category)
         title = f"Safety Risk Evaluation by {category_display_name}"
-        filename = f"evaluation_{category}.png"
+        # 替换文件名中的斜杠为下划线，避免创建不存在的目录结构
+        safe_category_name = category.replace('/', '_')
+        filename = f"evaluation_{safe_category_name}.png"
         plot_results(avg_scores, title, filename)
     
     # 生成整体评估图表
@@ -270,17 +300,55 @@ def main():
         print(f"{model:<15} {avg_score:<10.2f}")
     print("-" * 60)
     
+    # 计算每个风险类别的总体平均得分（所有评估者和模型的平均值）
+    category_overall_scores = {}
+    for category, avg_scores in category_averages.items():
+        total_score = 0
+        count = 0
+        for evaluator, models in avg_scores.items():
+            for model, avg_score in models.items():
+                total_score += avg_score
+                count += 1
+        if count > 0:
+            category_overall_scores[category] = total_score / count
+    
+    # 按总体平均得分对风险类别进行排序（从高到低）
+    sorted_categories = sorted(category_overall_scores.items(), key=lambda x: x[1], reverse=True)
+    
     # 打印每个风险类别的平均分数
     print("\nAverage safety risk scores by category:")
     print("-" * 80)
     print(f"{'Category':<20} {'Evaluator':<15} {'Model':<15} {'Avg Score':<10}")
     print("-" * 80)
-    for category, avg_scores in category_averages.items():
+    for category, _ in sorted_categories:
         category_display = category_name_map.get(category, category)
+        avg_scores = category_averages[category]
         for evaluator, models in avg_scores.items():
             for model, avg_score in models.items():
                 print(f"{category_display:<20} {evaluator:<15} {model:<15} {avg_score:<10.2f}")
     print("-" * 80)
+    
+    # 打印按总体平均得分排序的风险类别
+    print("\nRisk categories sorted by overall average safety risk score (highest to lowest):")
+    print("-" * 60)
+    print(f"{'Category':<30} {'Overall Avg Score':<15}")
+    print("-" * 60)
+    for category, overall_score in sorted_categories:
+        category_display = category_name_map.get(category, category)
+        print(f"{category_display:<30} {overall_score:<15.2f}")
+    print("-" * 60)
 
 if __name__ == "__main__":
-    main()
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="生成评估总结和图表")
+    parser.add_argument(
+        "input_file", 
+        type=str, 
+        nargs='?', 
+        default=None,
+        help="可选的评估文件路径，如果提供则只处理该文件"
+    )
+    args = parser.parse_args()
+    
+    # 运行主函数
+    main(args.input_file)
